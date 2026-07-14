@@ -413,7 +413,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.1.0 geladen');
+console.log('[ev-assistant-card] v1.1.1 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

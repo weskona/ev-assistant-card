@@ -7,6 +7,8 @@ Lovelace card for the [EV Assistant](https://github.com/weskona/ev_assistant) in
 
 **[🇩🇪 Deutsche Version weiter unten](#-deutsch)**
 
+![EV Assistant Card — detail view with a pending charge](card-preview.png)
+
 ---
 
 ## 🇬🇧 English

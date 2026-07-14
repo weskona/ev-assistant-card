@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] - 2026-07-14
+
+### Fixed
+
+- Added a preview screenshot to the README so the repository passes HACS's image-in-readme validation check (previously failed with "does not have images in the Readme file").
+
 ## [1.1.0] - 2026-07-14
 
 ### Added
