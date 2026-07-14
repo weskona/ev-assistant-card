@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] - 2026-07-14
+
+### Added
+
+- **Correct a past charge**: the detail view now has a collapsible "History" list of the last 10 confirmed charges (date, kWh, price, cost), each with an edit button that opens an inline kWh/price form and calls the new `ev_assistant.edit_charge` service (requires EV Assistant v0.6.0+). Requires no separate service call from Developer Tools.
+
 ## [1.1.1] - 2026-07-14
 
 ### Fixed

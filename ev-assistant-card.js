@@ -6,6 +6,10 @@ class EvAssistantCard extends HTMLElement {
     // mehrere Fremdladungen gleichzeitig offen sein, z.B. zwei Ladestopps
     // auf einem Roadtrip vor dem ersten Bestaetigen).
     this._formState = {};
+    // Bearbeitungszustand pro Historie-Eintrag, keyed by erfasst_ts (zum
+    // nachtraeglichen Korrigieren eines Tippfehlers bei kWh/Preis).
+    this._editState = {};
+    this._historyOpen = false;
     this._lastSignature = null;
   }
 
@@ -216,9 +220,65 @@ class EvAssistantCard extends HTMLElement {
     state[key] = e.target.value;
   }
 
+  // ----- Historie nachtraeglich korrigieren -------------------------------
+  // Eigener, von den offenen-Ladungen-Formularen getrennter Zustand: hier
+  // wird ein bereits bestaetigter Eintrag editiert (ev_assistant.edit_charge),
+  // keine neue Ladung angelegt. Keyed by erfasst_ts, der stabilen ID eines
+  // Historie-Eintrags.
+  _toggleHistory(ev) {
+    ev.stopPropagation();
+    this._historyOpen = !this._historyOpen;
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _startEditHistory(ev, rec) {
+    ev.stopPropagation();
+    this._editState[rec.erfasst_ts] = {
+      kwh: this._fmt(rec.kwh, 2).replace(',', '.'),
+      price: this._fmt(rec.preis_kwh, 3).replace(',', '.'),
+    };
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _cancelEditHistory(ev, erfasstTs) {
+    ev.stopPropagation();
+    delete this._editState[erfasstTs];
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _onHistoryInput(erfasstTs, key, e) {
+    const state = this._editState[erfasstTs] || (this._editState[erfasstTs] = {});
+    state[key] = e.target.value;
+  }
+
+  async _saveHistoryEdit(ev, erfasstTs) {
+    ev.stopPropagation();
+    const entryId = this._configEntryId();
+    if (!entryId) return;
+    const state = this._editState[erfasstTs] || {};
+    const kwh = parseFloat(state.kwh);
+    const price = parseFloat(state.price);
+    if (isNaN(kwh) || isNaN(price)) return;
+    await this._hass.callService('ev_assistant', 'edit_charge', {
+      config_entry_id: entryId,
+      erfasst_ts: erfasstTs,
+      kwh,
+      price_kwh: price,
+    });
+    delete this._editState[erfasstTs];
+    this._lastSignature = null;
+  }
+
   // ----- Rendering ---------------------------------------------------------
   _pendingList(ents) {
     return this._attr(ents.pending_binary, 'offene_ladungen') || [];
+  }
+
+  _historyList(ents) {
+    return this._attr(ents.last_cost, 'historie') || [];
   }
 
   _renderCompact(ents, name, pendingList) {
@@ -274,7 +334,32 @@ class EvAssistantCard extends HTMLElement {
       </div>`;
   }
 
-  _renderDetail(ents, name, pendingList) {
+  _renderHistoryRow(rec) {
+    const ts = rec.erfasst_ts;
+    const editing = this._editState[ts];
+    if (editing) {
+      return `
+        <div class="hist-row hist-edit" data-erfasst-ts="${ts}">
+          <div class="hist-date">${this._fmtDate(ts)}</div>
+          <input type="number" step="0.1" min="0" value="${editing.kwh || ''}" class="hist-kwh-input" data-erfasst-ts="${ts}" />
+          <input type="number" step="0.001" min="0" value="${editing.price || ''}" class="hist-price-input" data-erfasst-ts="${ts}" />
+          <div class="hist-actions">
+            <button class="hist-btn save" data-erfasst-ts="${ts}" title="Speichern">✓</button>
+            <button class="hist-btn cancel" data-erfasst-ts="${ts}" title="Abbrechen">✕</button>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="hist-row" data-erfasst-ts="${ts}">
+        <div class="hist-date">${this._fmtDate(ts)}</div>
+        <div class="hist-kwh">${this._fmt(rec.kwh, 1)} kWh</div>
+        <div class="hist-price">${this._fmt(rec.preis_kwh, 3)} €/kWh</div>
+        <div class="hist-cost">${this._fmt(rec.kosten, 2)} €</div>
+        <button class="hist-btn edit" data-erfasst-ts="${ts}" title="Korrigieren">✎</button>
+      </div>`;
+  }
+
+  _renderDetail(ents, name, pendingList, historyList) {
     const lastKwh = this._val(ents.last_kwh);
     const lastCost = this._val(ents.last_cost);
     const lastPrice = this._val(ents.last_price);
@@ -321,14 +406,21 @@ class EvAssistantCard extends HTMLElement {
           ${this._ok(lastPrice) ? `<div><div class="dl">Letzter Preis</div><div class="dv">${this._fmt(lastPrice, 3)} €/kWh</div></div>` : ''}
           ${this._ok(eff) ? `<div><div class="dl">Ladewirkungsgrad ${effInUse ? '(gemessen)' : '(manuell)'}</div><div class="dv">${this._fmt(effInUse ? eff : effManual, 1)} %${!effInUse ? ` <span class="hint-inline">(${effSessions}/${effNeeded} Sessions)</span>` : ''}</div></div>` : ''}
         </div>
+
+        ${historyList.length ? `
+          <div class="div"></div>
+          <div class="hist-toggle" data-action="toggle-history">${this._historyOpen ? '▾' : '▸'} Historie (${historyList.length}${historyList.length > 10 ? ', letzte 10' : ''})</div>
+          ${this._historyOpen ? `<div class="hist-list">${historyList.slice(0, 10).map((rec) => this._renderHistoryRow(rec)).join('')}</div>` : ''}
+        ` : ''}
       </div>`;
   }
 
   _render(ents) {
     const name = this._getDeviceName();
     const pendingList = this._pendingList(ents);
+    const historyList = this._historyList(ents);
     const html = this._mode === 'detail'
-      ? this._renderDetail(ents, name, pendingList)
+      ? this._renderDetail(ents, name, pendingList, historyList)
       : this._renderCompact(ents, name, pendingList);
 
     this.shadowRoot.innerHTML = `<style>
@@ -362,6 +454,19 @@ class EvAssistantCard extends HTMLElement {
       .div{border:none;border-top:1px solid var(--divider-color,rgba(0,0,0,.08));margin:12px 0}
       .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
       .dl{font-size:11px;color:var(--secondary-text-color);margin-bottom:2px}.dv{font-size:13px;font-weight:500}
+      .hist-toggle{font-size:12px;font-weight:500;color:var(--primary-color,#03a9f4);cursor:pointer;user-select:none}
+      .hist-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+      .hist-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;background:var(--secondary-background-color,rgba(0,0,0,.03));font-size:12px}
+      .hist-date{color:var(--secondary-text-color)}
+      .hist-kwh,.hist-price,.hist-cost{font-weight:500}
+      .hist-btn{border:none;background:transparent;color:var(--secondary-text-color);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
+      .hist-btn:hover{background:rgba(0,0,0,.06);color:var(--primary-text-color)}
+      .hist-edit{display:flex;flex-wrap:wrap;align-items:center}
+      .hist-edit .hist-date{flex:1 1 100%;margin-bottom:4px}
+      .hist-edit input{flex:1 1 80px;min-width:0;font-size:12px;padding:5px 6px;border-radius:4px;border:1px solid var(--divider-color,rgba(0,0,0,.2));background:var(--card-background-color,#fff);color:var(--primary-text-color)}
+      .hist-actions{display:flex;gap:2px;flex:0 0 auto}
+      .hist-actions .save{color:var(--success-color,#10b981)}
+      .hist-actions .cancel{color:var(--error-color,#db4437)}
 
       @container evac (max-width: 340px) {
         .compact{padding:10px 12px;gap:8px}
@@ -370,6 +475,8 @@ class EvAssistantCard extends HTMLElement {
         .detail{padding:12px}
         .pending-row,.metrics{grid-template-columns:repeat(2,1fr)}
         .form-row,.g2{grid-template-columns:1fr}
+        .hist-row{grid-template-columns:1fr 1fr;grid-template-areas:"date date" "kwh price" "cost edit"}
+        .hist-row .hist-date{grid-area:date}.hist-row .hist-kwh{grid-area:kwh}.hist-row .hist-price{grid-area:price}.hist-row .hist-cost{grid-area:cost}.hist-row .hist-btn{grid-area:edit;justify-self:end}
       }
       @container evac (min-width: 561px) {
         .metrics{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
@@ -396,6 +503,28 @@ class EvAssistantCard extends HTMLElement {
       this.shadowRoot.querySelectorAll('.btn.discard').forEach((el) => {
         el.addEventListener('click', (e) => this._discard(e, parseFloat(el.dataset.startTs)));
       });
+
+      const histToggle = this.shadowRoot.querySelector('.hist-toggle');
+      if (histToggle) histToggle.addEventListener('click', (e) => this._toggleHistory(e));
+      this.shadowRoot.querySelectorAll('.hist-btn.edit').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          const ts = parseFloat(el.dataset.erfasstTs);
+          const rec = historyList.find((r) => r.erfasst_ts === ts);
+          if (rec) this._startEditHistory(e, rec);
+        });
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.cancel').forEach((el) => {
+        el.addEventListener('click', (e) => this._cancelEditHistory(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.save').forEach((el) => {
+        el.addEventListener('click', (e) => this._saveHistoryEdit(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-kwh-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onHistoryInput(parseFloat(el.dataset.erfasstTs), 'kwh', e));
+      });
+      this.shadowRoot.querySelectorAll('.hist-price-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onHistoryInput(parseFloat(el.dataset.erfasstTs), 'price', e));
+      });
     }
   }
 
@@ -413,7 +542,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.1.1 geladen');
+console.log('[ev-assistant-card] v1.2.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)
