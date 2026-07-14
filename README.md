@@ -19,6 +19,7 @@ Lovelace card for the [EV Assistant](https://github.com/weskona/ev_assistant) in
 - **Two modes:** Compact (tile) and detail — toggle by clicking the card.
 - **Inline confirmation form:** when a Fremdladung is pending, the detail view shows an editable kWh/price form with Save/Discard buttons that call the integration's services directly (`config_entry_id` is resolved automatically from the card's device — works correctly even if you run more than one EV Assistant instance). **More than one charge can be pending at once** (e.g. two charging stops before you get around to confirming either) — the card shows a separate form for each and confirms/discards the correct one.
 - **Correct a past charge:** the detail view has a collapsible "History" list of your last 10 confirmed charges (date, kWh, price, cost). Each row has an edit button to fix a typo in kWh or price after the fact — the integration adjusts the running totals by the difference, no need to touch Developer Tools.
+- **Delete a past charge:** each history row also has a delete button (with an inline "really delete?" confirmation) for removing a falsely detected charge entirely — e.g. it wasn't actually an external charge. Not reversible.
 - **Responsive layout** that adapts to the actual rendered card width (container queries), not just the browser window.
 - Shows totals (kWh, cost, count), the last confirmed charge, and the measured charge-efficiency calibration status if available.
 
@@ -85,6 +86,7 @@ This card needs none of that: point it at a device, and the form, the service ca
 - **Zwei Modi:** Kompakt (Kachel) und Detail — per Klick umschaltbar.
 - **Direktes Erfassungsformular:** ist eine Fremdladung offen, zeigt die Detailansicht ein bearbeitbares kWh/Preis-Formular mit Speichern/Verwerfen-Buttons, die die Services der Integration direkt aufrufen (`config_entry_id` wird automatisch aus dem Geräte-Bezug der Karte ermittelt — funktioniert auch korrekt bei mehreren EV-Assistant-Instanzen). **Es können mehrere Ladungen gleichzeitig offen sein** (z.B. zwei Ladestopps, bevor du zum Bestätigen kommst) — die Karte zeigt dann ein eigenes Formular je Ladung und bestätigt/verwirft die richtige.
 - **Eine vergangene Ladung korrigieren:** die Detailansicht hat eine ausklappbare „Historie"-Liste der letzten 10 bestätigten Ladungen (Datum, kWh, Preis, Kosten). Jede Zeile hat einen Bearbeiten-Button, um einen Tippfehler bei kWh oder Preis nachträglich zu korrigieren — die Integration passt die laufenden Summen um die Differenz an, ganz ohne Entwicklerwerkzeuge.
+- **Eine vergangene Ladung löschen:** jede Historien-Zeile hat auch einen Löschen-Button (mit Inline-Bestätigung „wirklich löschen?"), um eine fälschlich erkannte Ladung komplett zu entfernen — z.B. wenn es gar keine Fremdladung war. Nicht rückgängig zu machen.
 - **Responsives Layout**, das sich an die tatsächliche Kartenbreite anpasst (Container Queries), nicht nur an die Fenstergröße.
 - Zeigt Summen (kWh, Kosten, Anzahl), die letzte bestätigte Ladung sowie den Status der Ladewirkungsgrad-Kalibrierung, falls vorhanden.
 

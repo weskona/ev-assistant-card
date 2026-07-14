@@ -9,6 +9,9 @@ class EvAssistantCard extends HTMLElement {
     // Bearbeitungszustand pro Historie-Eintrag, keyed by erfasst_ts (zum
     // nachtraeglichen Korrigieren eines Tippfehlers bei kWh/Preis).
     this._editState = {};
+    // Loesch-Bestaetigung pro Historie-Eintrag, keyed by erfasst_ts (true
+    // waehrend die "wirklich loeschen?"-Nachfrage angezeigt wird).
+    this._deleteConfirm = {};
     this._historyOpen = false;
     this._lastSignature = null;
   }
@@ -272,6 +275,37 @@ class EvAssistantCard extends HTMLElement {
     this._lastSignature = null;
   }
 
+  // ----- Historie-Eintrag loeschen -----------------------------------------
+  // Getrennt vom Bearbeiten: hier wird ein Eintrag komplett entfernt (z.B.
+  // eine faelschlich erkannte Fremdladung, die gar keine war). Da nicht
+  // rueckgaengig zu machen, erst eine Inline-Bestaetigung ("wirklich
+  // loeschen?") statt sofort zu loeschen.
+  _askDeleteHistory(ev, erfasstTs) {
+    ev.stopPropagation();
+    this._deleteConfirm[erfasstTs] = true;
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _cancelDeleteHistory(ev, erfasstTs) {
+    ev.stopPropagation();
+    delete this._deleteConfirm[erfasstTs];
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  async _confirmDeleteHistory(ev, erfasstTs) {
+    ev.stopPropagation();
+    const entryId = this._configEntryId();
+    if (!entryId) return;
+    await this._hass.callService('ev_assistant', 'delete_charge', {
+      config_entry_id: entryId,
+      erfasst_ts: erfasstTs,
+    });
+    delete this._deleteConfirm[erfasstTs];
+    this._lastSignature = null;
+  }
+
   // ----- Rendering ---------------------------------------------------------
   _pendingList(ents) {
     return this._attr(ents.pending_binary, 'offene_ladungen') || [];
@@ -337,6 +371,7 @@ class EvAssistantCard extends HTMLElement {
   _renderHistoryRow(rec) {
     const ts = rec.erfasst_ts;
     const editing = this._editState[ts];
+    const deleting = this._deleteConfirm[ts];
     if (editing) {
       return `
         <div class="hist-row hist-edit" data-erfasst-ts="${ts}">
@@ -349,13 +384,27 @@ class EvAssistantCard extends HTMLElement {
           </div>
         </div>`;
     }
+    if (deleting) {
+      return `
+        <div class="hist-row hist-edit hist-delete-confirm" data-erfasst-ts="${ts}">
+          <div class="hist-date">${this._fmtDate(ts)}</div>
+          <div class="hist-confirm-text">Wirklich löschen? (${this._fmt(rec.kwh, 1)} kWh, ${this._fmt(rec.kosten, 2)} €)</div>
+          <div class="hist-actions">
+            <button class="hist-btn confirm-delete" data-erfasst-ts="${ts}" title="Ja, löschen">✓</button>
+            <button class="hist-btn cancel-delete" data-erfasst-ts="${ts}" title="Abbrechen">✕</button>
+          </div>
+        </div>`;
+    }
     return `
       <div class="hist-row" data-erfasst-ts="${ts}">
         <div class="hist-date">${this._fmtDate(ts)}</div>
         <div class="hist-kwh">${this._fmt(rec.kwh, 1)} kWh</div>
         <div class="hist-price">${this._fmt(rec.preis_kwh, 3)} €/kWh</div>
         <div class="hist-cost">${this._fmt(rec.kosten, 2)} €</div>
-        <button class="hist-btn edit" data-erfasst-ts="${ts}" title="Korrigieren">✎</button>
+        <div class="hist-row-actions">
+          <button class="hist-btn edit" data-erfasst-ts="${ts}" title="Korrigieren">✎</button>
+          <button class="hist-btn delete" data-erfasst-ts="${ts}" title="Löschen">🗑</button>
+        </div>
       </div>`;
   }
 
@@ -467,6 +516,11 @@ class EvAssistantCard extends HTMLElement {
       .hist-actions{display:flex;gap:2px;flex:0 0 auto}
       .hist-actions .save{color:var(--success-color,#10b981)}
       .hist-actions .cancel{color:var(--error-color,#db4437)}
+      .hist-row-actions{display:flex;gap:2px;justify-self:end}
+      .hist-delete-confirm{background:rgba(219,68,55,.08)}
+      .hist-confirm-text{flex:1 1 100%;font-size:12px;color:var(--primary-text-color)}
+      .hist-actions .confirm-delete{color:var(--error-color,#db4437)}
+      .hist-actions .cancel-delete{color:var(--secondary-text-color)}
 
       @container evac (max-width: 340px) {
         .compact{padding:10px 12px;gap:8px}
@@ -476,7 +530,7 @@ class EvAssistantCard extends HTMLElement {
         .pending-row,.metrics{grid-template-columns:repeat(2,1fr)}
         .form-row,.g2{grid-template-columns:1fr}
         .hist-row{grid-template-columns:1fr 1fr;grid-template-areas:"date date" "kwh price" "cost edit"}
-        .hist-row .hist-date{grid-area:date}.hist-row .hist-kwh{grid-area:kwh}.hist-row .hist-price{grid-area:price}.hist-row .hist-cost{grid-area:cost}.hist-row .hist-btn{grid-area:edit;justify-self:end}
+        .hist-row .hist-date{grid-area:date}.hist-row .hist-kwh{grid-area:kwh}.hist-row .hist-price{grid-area:price}.hist-row .hist-cost{grid-area:cost}.hist-row .hist-row-actions{grid-area:edit;justify-self:end}
       }
       @container evac (min-width: 561px) {
         .metrics{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
@@ -525,6 +579,15 @@ class EvAssistantCard extends HTMLElement {
       this.shadowRoot.querySelectorAll('.hist-price-input').forEach((el) => {
         el.addEventListener('input', (e) => this._onHistoryInput(parseFloat(el.dataset.erfasstTs), 'price', e));
       });
+      this.shadowRoot.querySelectorAll('.hist-btn.delete').forEach((el) => {
+        el.addEventListener('click', (e) => this._askDeleteHistory(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.cancel-delete').forEach((el) => {
+        el.addEventListener('click', (e) => this._cancelDeleteHistory(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.confirm-delete').forEach((el) => {
+        el.addEventListener('click', (e) => this._confirmDeleteHistory(e, parseFloat(el.dataset.erfasstTs)));
+      });
     }
   }
 
@@ -542,7 +605,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.2.0 geladen');
+console.log('[ev-assistant-card] v1.3.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

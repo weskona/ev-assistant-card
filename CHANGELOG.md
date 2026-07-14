@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] - 2026-07-15
+
+### Added
+
+- **Delete a past charge**: each row in the History list now also has a delete button (🗑) next to the edit button, for removing a falsely detected charge entirely (e.g. it wasn't actually an external charge). Asks for inline confirmation first, then calls the new `ev_assistant.delete_charge` service (requires EV Assistant v0.7.0+). Not reversible.
+
 ## [1.2.0] - 2026-07-14
 
 ### Added
