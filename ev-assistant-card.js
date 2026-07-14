@@ -2,8 +2,10 @@ class EvAssistantCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._kwhVal = '';
-    this._priceVal = '';
+    // Formularzustand pro offener Ladung, keyed by start_ts (es koennen
+    // mehrere Fremdladungen gleichzeitig offen sein, z.B. zwei Ladestopps
+    // auf einem Roadtrip vor dem ersten Bestaetigen).
+    this._formState = {};
     this._lastSignature = null;
   }
 
@@ -174,48 +176,61 @@ class EvAssistantCard extends HTMLElement {
   }
 
   // ----- Aktionen (Services direkt aufrufen, kein input_number-Umweg) ----
-  async _save(ev) {
+  // `startTs` waehlt bei mehreren gleichzeitig offenen Ladungen die
+  // gemeinte aus; ohne Angabe (undefined) bestaetigt/verwirft der Service
+  // die aelteste (FIFO) — hier aber immer explizit mitgegeben, da die
+  // Karte pro offener Ladung ein eigenes Formular mit bekanntem start_ts
+  // zeigt.
+  async _save(ev, startTs) {
     ev.stopPropagation();
     const entryId = this._configEntryId();
     if (!entryId) return;
-    const kwh = parseFloat(this._kwhVal);
-    const price = parseFloat(this._priceVal);
+    const state = this._formState[startTs] || {};
+    const kwh = parseFloat(state.kwh);
+    const price = parseFloat(state.price);
     if (isNaN(kwh) || isNaN(price)) return;
     await this._hass.callService('ev_assistant', 'log_charge', {
       config_entry_id: entryId,
+      start_ts: startTs,
       kwh,
       price_kwh: price,
     });
-    this._kwhVal = '';
-    this._priceVal = '';
+    delete this._formState[startTs];
     this._lastSignature = null;
   }
 
-  async _discard(ev) {
+  async _discard(ev, startTs) {
     ev.stopPropagation();
     const entryId = this._configEntryId();
     if (!entryId) return;
     await this._hass.callService('ev_assistant', 'discard_pending', {
       config_entry_id: entryId,
+      start_ts: startTs,
     });
-    this._kwhVal = '';
-    this._priceVal = '';
+    delete this._formState[startTs];
     this._lastSignature = null;
   }
 
-  _onInput(key, e) {
-    if (key === 'kwh') this._kwhVal = e.target.value;
-    else this._priceVal = e.target.value;
+  _onInput(startTs, key, e) {
+    const state = this._formState[startTs] || (this._formState[startTs] = {});
+    state[key] = e.target.value;
   }
 
   // ----- Rendering ---------------------------------------------------------
-  _renderCompact(ents, name, pending) {
+  _pendingList(ents) {
+    return this._attr(ents.pending_binary, 'offene_ladungen') || [];
+  }
+
+  _renderCompact(ents, name, pendingList) {
     const count = this._val(ents.count);
     const totalKwh = this._val(ents.total_kwh);
-    const color = pending ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)';
-    const icon = pending ? '⚡' : '🔌';
-    const sub = pending
-      ? `Fremdladung erkannt, ~${this._fmt(this._val(ents.pending_estimate), 1)} kWh`
+    const n = pendingList.length;
+    const color = n ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)';
+    const icon = n ? '⚡' : '🔌';
+    const sub = n
+      ? n === 1
+        ? `Fremdladung erkannt, ~${this._fmt(pendingList[0].energy_kwh, 1)} kWh`
+        : `${n} offene Fremdladungen`
       : this._ok(count)
         ? `${parseInt(count, 10)} Ladungen · ${this._fmt(totalKwh, 0)} kWh gesamt`
         : 'Keine Fremdladungen erfasst';
@@ -226,17 +241,40 @@ class EvAssistantCard extends HTMLElement {
           <div class="name">${name}</div>
           <div class="sub">${sub}</div>
         </div>
-        ${pending ? '<div class="chip warn">⚠ Offen</div>' : '<div class="chip ok">OK</div>'}
+        ${n ? '<div class="chip warn">⚠ Offen</div>' : '<div class="chip ok">OK</div>'}
       </div>`;
   }
 
-  _renderDetail(ents, name, pending) {
-    const estimate = this._val(ents.pending_estimate);
-    const socStart = this._attr(ents.pending_estimate, 'soc_start');
-    const socEnd = this._attr(ents.pending_estimate, 'soc_end');
-    const source = this._attr(ents.pending_estimate, 'energy_source');
-    const startTs = this._attr(ents.pending_estimate, 'start_ts');
+  _renderPendingForm(p, lastPrice) {
+    const startTs = p.start_ts;
+    const state = this._formState[startTs] || (this._formState[startTs] = {});
+    if (state.kwh === undefined) state.kwh = p.energy_kwh ? this._fmt(p.energy_kwh, 1).replace(',', '.') : '';
+    if (state.price === undefined) state.price = this._ok(lastPrice) ? this._fmt(lastPrice, 3).replace(',', '.') : '';
+    const safeTs = String(startTs).replace(/[^0-9.]/g, '');
+    return `
+      <div class="pending-box" data-start-ts="${startTs}">
+        <div class="pending-row">
+          <div><div class="dl">SoC</div><div class="dv">${this._fmt(p.soc_start, 0)} % → ${this._fmt(p.soc_end, 0)} %</div></div>
+          <div><div class="dl">Geschätzt</div><div class="dv">${this._fmt(p.energy_kwh, 1)} kWh</div></div>
+          <div><div class="dl">Seit</div><div class="dv">${this._fmtDate(startTs)}</div></div>
+        </div>
+        <div class="form-row">
+          <label>Geladene kWh (Beleg)
+            <input type="number" step="0.1" min="0" value="${state.kwh || ''}" class="kwh-input" data-start-ts="${startTs}" id="kwh-input-${safeTs}" />
+          </label>
+          <label>Preis pro kWh
+            <input type="number" step="0.001" min="0" value="${state.price || ''}" class="price-input" data-start-ts="${startTs}" id="price-input-${safeTs}" />
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn save" data-start-ts="${startTs}">Speichern</button>
+          <button class="btn discard" data-start-ts="${startTs}">Verwerfen</button>
+        </div>
+        <div class="hint">Quelle der Schätzung: ${p.energy_source || '—'}</div>
+      </div>`;
+  }
 
+  _renderDetail(ents, name, pendingList) {
     const lastKwh = this._val(ents.last_kwh);
     const lastCost = this._val(ents.last_cost);
     const lastPrice = this._val(ents.last_price);
@@ -250,48 +288,22 @@ class EvAssistantCard extends HTMLElement {
     const effInUse = this._attr(ents.measured_efficiency, 'wird_verwendet');
     const effManual = this._attr(ents.measured_efficiency, 'manueller_wert_prozent');
 
-    if (this._kwhVal === '' && estimate) {
-      this._kwhVal = this._fmt(estimate, 1).replace(',', '.');
-    }
-    if (this._priceVal === '' && this._ok(lastPrice)) {
-      this._priceVal = this._fmt(lastPrice, 3).replace(',', '.');
-    }
+    const n = pendingList.length;
 
     return `
       <div class="card detail">
         <div class="dh">
           <div class="hl">
-            <div class="iw" style="background:${pending ? 'var(--warning-color,#f59e0b)22' : 'var(--success-color,#10b981)22'};color:${pending ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)'}">${pending ? '⚡' : '🔌'}</div>
+            <div class="iw" style="background:${n ? 'var(--warning-color,#f59e0b)22' : 'var(--success-color,#10b981)22'};color:${n ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)'}">${n ? '⚡' : '🔌'}</div>
             <div>
               <div class="name">${name}</div>
               <div class="sub">Fremdladungs-Erfassung</div>
             </div>
           </div>
-          ${pending ? '<div class="chip warn">⚠ Offen</div>' : '<div class="chip ok">Keine offene Ladung</div>'}
+          ${n ? `<div class="chip warn">⚠ ${n === 1 ? 'Offen' : n + ' offen'}</div>` : '<div class="chip ok">Keine offene Ladung</div>'}
         </div>
 
-        ${pending ? `
-        <div class="pending-box">
-          <div class="pending-row">
-            <div><div class="dl">SoC</div><div class="dv">${this._fmt(socStart, 0)} % → ${this._fmt(socEnd, 0)} %</div></div>
-            <div><div class="dl">Geschätzt</div><div class="dv">${this._fmt(estimate, 1)} kWh</div></div>
-            <div><div class="dl">Seit</div><div class="dv">${this._fmtDate(startTs)}</div></div>
-          </div>
-          <div class="form-row">
-            <label>Geladene kWh (Beleg)
-              <input type="number" step="0.1" min="0" value="${this._kwhVal}" id="kwh-input" />
-            </label>
-            <label>Preis pro kWh
-              <input type="number" step="0.001" min="0" value="${this._priceVal}" id="price-input" />
-            </label>
-          </div>
-          <div class="form-actions">
-            <button class="btn save" id="save-btn">Speichern</button>
-            <button class="btn discard" id="discard-btn">Verwerfen</button>
-          </div>
-          <div class="hint">Quelle der Schätzung: ${source || '—'}</div>
-        </div>
-        ` : ''}
+        ${pendingList.map((p) => this._renderPendingForm(p, lastPrice)).join('')}
 
         <div class="div"></div>
 
@@ -314,10 +326,10 @@ class EvAssistantCard extends HTMLElement {
 
   _render(ents) {
     const name = this._getDeviceName();
-    const pending = this._val(ents.pending_binary) === 'on';
+    const pendingList = this._pendingList(ents);
     const html = this._mode === 'detail'
-      ? this._renderDetail(ents, name, pending)
-      : this._renderCompact(ents, name, pending);
+      ? this._renderDetail(ents, name, pendingList)
+      : this._renderCompact(ents, name, pendingList);
 
     this.shadowRoot.innerHTML = `<style>
       :host{display:block;container-type:inline-size;container-name:evac}*{box-sizing:border-box;margin:0;padding:0}
@@ -370,14 +382,20 @@ class EvAssistantCard extends HTMLElement {
       cardEl.addEventListener('click', () => this._toggleMode());
     } else {
       this.shadowRoot.querySelector('.dh').addEventListener('click', () => this._toggleMode());
-      const kwhInput = this.shadowRoot.querySelector('#kwh-input');
-      const priceInput = this.shadowRoot.querySelector('#price-input');
-      if (kwhInput) kwhInput.addEventListener('input', (e) => this._onInput('kwh', e));
-      if (priceInput) priceInput.addEventListener('input', (e) => this._onInput('price', e));
-      const saveBtn = this.shadowRoot.querySelector('#save-btn');
-      const discardBtn = this.shadowRoot.querySelector('#discard-btn');
-      if (saveBtn) saveBtn.addEventListener('click', (e) => this._save(e));
-      if (discardBtn) discardBtn.addEventListener('click', (e) => this._discard(e));
+      // Mehrere Formulare moeglich (eines pro offener Ladung) — jedes traegt
+      // sein start_ts als data-Attribut, um Eingaben/Aktionen zuzuordnen.
+      this.shadowRoot.querySelectorAll('.kwh-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onInput(parseFloat(el.dataset.startTs), 'kwh', e));
+      });
+      this.shadowRoot.querySelectorAll('.price-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onInput(parseFloat(el.dataset.startTs), 'price', e));
+      });
+      this.shadowRoot.querySelectorAll('.btn.save').forEach((el) => {
+        el.addEventListener('click', (e) => this._save(e, parseFloat(el.dataset.startTs)));
+      });
+      this.shadowRoot.querySelectorAll('.btn.discard').forEach((el) => {
+        el.addEventListener('click', (e) => this._discard(e, parseFloat(el.dataset.startTs)));
+      });
     }
   }
 
@@ -395,7 +413,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.0.0 geladen');
+console.log('[ev-assistant-card] v1.1.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

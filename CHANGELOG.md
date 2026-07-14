@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] - 2026-07-14
+
+### Added
+
+- **Multiple simultaneously pending charges**: matches EV Assistant v0.5.0, which fixed a data-loss bug where a second detected external charge silently overwrote the first before it was confirmed. The card now shows one form per open charge (each reads `start_ts` from the shared `offene_ladungen` attribute) and passes the corresponding `start_ts` to `log_charge`/`discard_pending` so the right one is always confirmed or discarded. Compact view and the header chip show a count when more than one is open.
+
 ## [1.0.0] - 2026-07-14
 
 ### Added
