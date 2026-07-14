@@ -1,0 +1,6 @@
+{
+  "name": "EV Assistant Card",
+  "render_readme": true,
+  "filename": "ev-assistant-card.js",
+  "homeassistant": "2024.1.0"
+}
