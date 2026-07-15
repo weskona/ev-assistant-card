@@ -150,6 +150,15 @@ class EvAssistantCard extends HTMLElement {
     }
   }
 
+  _fmtDuration(minutes) {
+    const m = parseFloat(minutes);
+    if (isNaN(m) || m < 0) return null;
+    if (m < 60) return `${Math.round(m)} min`;
+    const h = Math.floor(m / 60);
+    const rem = Math.round(m % 60);
+    return rem ? `${h}h ${rem}min` : `${h}h`;
+  }
+
   // ----- Re-Render-Signatur ----------------------------------------------
   // Ohne diese Sperre wuerde JEDE hass-Aktualisierung (also praktisch
   // dauernd, ausgeloest von irgendeiner beliebigen Entitaet im System) das
@@ -351,6 +360,7 @@ class EvAssistantCard extends HTMLElement {
           <div><div class="dl">SoC</div><div class="dv">${this._fmt(p.soc_start, 0)} % → ${this._fmt(p.soc_end, 0)} %</div></div>
           <div><div class="dl">Geschätzt</div><div class="dv">${this._fmt(p.energy_kwh, 1)} kWh</div></div>
           <div><div class="dl">Seit</div><div class="dv">${this._fmtDate(startTs)}</div></div>
+          ${this._fmtDuration(p.duration_min) ? `<div><div class="dl">Ladezeit</div><div class="dv">${this._fmtDuration(p.duration_min)}</div></div>` : ''}
         </div>
         <div class="form-row">
           <label>Geladene kWh (Beleg)
@@ -395,9 +405,10 @@ class EvAssistantCard extends HTMLElement {
           </div>
         </div>`;
     }
+    const dur = this._fmtDuration(rec.dauer_min);
     return `
       <div class="hist-row" data-erfasst-ts="${ts}">
-        <div class="hist-date">${this._fmtDate(ts)}</div>
+        <div class="hist-date">${this._fmtDate(ts)}${dur ? `<span class="hist-duration">${dur}</span>` : ''}</div>
         <div class="hist-kwh">${this._fmt(rec.kwh, 1)} kWh</div>
         <div class="hist-price">${this._fmt(rec.preis_kwh, 3)} €/kWh</div>
         <div class="hist-cost">${this._fmt(rec.kosten, 2)} €</div>
@@ -507,6 +518,7 @@ class EvAssistantCard extends HTMLElement {
       .hist-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
       .hist-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;background:var(--secondary-background-color,rgba(0,0,0,.03));font-size:12px}
       .hist-date{color:var(--secondary-text-color)}
+      .hist-duration{display:block;font-size:10px;opacity:.8}
       .hist-kwh,.hist-price,.hist-cost{font-weight:500}
       .hist-btn{border:none;background:transparent;color:var(--secondary-text-color);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
       .hist-btn:hover{background:rgba(0,0,0,.06);color:var(--primary-text-color)}
@@ -605,7 +617,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.3.0 geladen');
+console.log('[ev-assistant-card] v1.4.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

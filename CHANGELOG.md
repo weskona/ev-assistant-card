@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] - 2026-07-15
+
+### Added
+
+- **Charging duration** shown wherever a charge's timing is relevant: the pending-charge form gains a "Ladezeit" field alongside SoC/estimate/since, and each history row now shows the session length under the date (e.g. "45 min" or "1h 15min"). Requires EV Assistant v0.9.0+ for the underlying data; older data without a duration simply shows nothing extra.
+
 ## [1.3.0] - 2026-07-15
 
 ### Added
