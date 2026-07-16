@@ -101,6 +101,16 @@ class EvAssistantCard extends HTMLElement {
         result.last_cost = id;
       } else if (has('last_kwh') || id.includes('letzte_kwh') || id.includes('kwh_letzte')) {
         result.last_kwh = id;
+      // home_kwh/home_cost zuerst per translation_key claimen: ihre Entity-IDs
+      // ("... heimladen_kwh_gesamt" / "... heimladen_kosten_gesamt") enthalten
+      // sonst dieselben Substrings wie total_kwh/total_cost und wuerden diese
+      // im generischen Fallback darunter faelschlich ueberschreiben.
+      } else if (has('home_kwh')) {
+        result.home_kwh = id;
+      } else if (has('home_cost')) {
+        result.home_cost = id;
+      } else if (has('savings')) {
+        result.savings = id;
       } else if (has('total_kwh') || id.includes('kwh_gesamt')) {
         result.total_kwh = id;
       } else if (has('total_cost') || id.includes('kosten_gesamt')) {
@@ -617,7 +627,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.4.0 geladen');
+console.log('[ev-assistant-card] v1.4.1 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

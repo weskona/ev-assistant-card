@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.1] - 2026-07-15
+
+### Fixed
+
+- **"kWh gesamt"/"Kosten gesamt" showed nothing after updating to EV Assistant v0.10.0**: the new `... Heimladen kWh (gesamt)` / `... Heimladen Kosten (gesamt)` sensors' entity IDs also contain the substrings `kwh_gesamt`/`kosten_gesamt`, which the card's fallback entity-matching used to identify the *external*-charging totals — so on installs without a translation_key match yet, the home-charging sensors (often `unknown` without a configured wallbox meter) silently won the match instead of the correct total sensors. Added explicit `home_kwh`/`home_cost`/`savings` matches ahead of the ambiguous fallback so they're claimed first and never collide.
+
 ## [1.4.0] - 2026-07-15
 
 ### Added
