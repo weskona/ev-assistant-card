@@ -2,6 +2,25 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.0] - 2026-07-21
+
+### Added
+
+- **Fahrtenbuch (trip log) support**, matching EV Assistant v0.14.0/0.14.1. Entity discovery now
+  additionally picks up `trip_pending` (binary sensor), `trip_pending_estimate`, `last_trip_km`,
+  `trip_count`, and `total_trip_km` — checked ahead of the existing charge-related fallbacks in
+  the matching chain, since some of the new entity IDs/`unique_id` suffixes are supersets of the
+  charge ones (e.g. `..._trip_count` ends with `_count`, `..._fahrt_schatzung` contains
+  `schatzung`) and would otherwise be misclaimed. The detail view gains a separate "Fahrtenbuch"
+  section: an inline start/end-location form for each pending trip (calls `log_trip`/
+  `discard_pending_trip`), running totals (km, count), and a collapsible history of the last 10
+  confirmed trips with edit (`edit_trip`) and delete (`delete_trip`) buttons — the same
+  detect-automatically/confirm-manually pattern as external charges, entirely separate state and
+  DOM classes so neither feature's event handlers can fire on the other's elements. The compact
+  view now also surfaces a pending trip (distance, count) when no charge is pending. The whole
+  section stays hidden on installs without the Fahrtenbuch feature configured (no odometer
+  entity), just like other optional sensors already do.
+
 ## [1.4.1] - 2026-07-15
 
 ### Fixed

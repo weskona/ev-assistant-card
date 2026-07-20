@@ -13,6 +13,13 @@ class EvAssistantCard extends HTMLElement {
     // waehrend die "wirklich loeschen?"-Nachfrage angezeigt wird).
     this._deleteConfirm = {};
     this._historyOpen = false;
+    // Fahrtenbuch: dieselben drei Zustaende wie oben, aber fuer offene/
+    // bestaetigte Fahrten statt Fremdladungen (start_ort/end_ort statt
+    // kwh/price, sonst identisches Muster).
+    this._formStateTrip = {};
+    this._editStateTrip = {};
+    this._deleteConfirmTrip = {};
+    this._historyOpenTrip = false;
     this._lastSignature = null;
   }
 
@@ -88,14 +95,35 @@ class EvAssistantCard extends HTMLElement {
       const has = (key) => uid.endsWith('_' + key) || tk === key;
 
       if (domain === 'binary_sensor') {
-        result.pending_binary = id;
+        // trip_pending ZUERST pruefen: sein unique_id-Suffix "_trip_pending"
+        // endet ebenfalls auf "_pending" und wuerde sonst faelschlich als
+        // Fremdladungs-Pending-Sensor durchgehen (has() prueft nur das Suffix).
+        if (has('trip_pending')) {
+          result.trip_pending_binary = id;
+        } else {
+          result.pending_binary = id;
+        }
         return;
       }
+      // Fahrtenbuch-Sensoren ZUERST pruefen (analog home_kwh/home_cost oben
+      // in der Datei-Historie): ihre Entity-IDs/unique_id-Suffixe sind
+      // Ober-Strings der Fremdladungs-Substrings weiter unten (z.B. endet
+      // "_trip_count" auf "_count", "fahrt_schatzung" enthaelt "schatzung")
+      // und wuerden sonst vom generischen Fallback dort faelschlich zuerst
+      // geclaimt.
+      if (has('trip_pending_estimate') || id.includes('fahrt_schatzung') || id.includes('fahrt_schaetzung')) {
+        result.trip_pending_estimate = id;
+      } else if (has('last_trip_km') || id.includes('fahrt_km_letzte')) {
+        result.last_trip_km = id;
+      } else if (has('trip_count') || id.includes('fahrtenbuch_anzahl')) {
+        result.trip_count = id;
+      } else if (has('total_trip_km') || id.includes('fahrtenbuch_km_gesamt')) {
+        result.total_trip_km = id;
       // Substring-Fallback deckt beide Wortreihenfolgen ab: die urspruengliche
       // Benennung vor dem "Fremdladung"-Praefix-Umbau (z.B. "letzte_kosten")
       // UND die daraus per translation_key neu vergebene Reihenfolge bei
       // frisch angelegten Entitaeten (z.B. "fremdladung_kosten_letzte").
-      if (has('pending_estimate') || id.includes('schatzung') || id.includes('schaetzung')) {
+      } else if (has('pending_estimate') || id.includes('schatzung') || id.includes('schaetzung')) {
         result.pending_estimate = id;
       } else if (has('last_cost') || id.includes('letzte_kosten') || id.includes('kosten_letzte')) {
         result.last_cost = id;
@@ -325,6 +353,120 @@ class EvAssistantCard extends HTMLElement {
     this._lastSignature = null;
   }
 
+  // ----- Fahrtenbuch: offene Fahrt bestaetigen/verwerfen ------------------
+  // Identisches Muster wie _save/_discard oben, aber start_ort/end_ort statt
+  // kwh/price -- Kilometerstand/Strecke kommen ausschliesslich aus der
+  // Erkennung (siehe ev_assistant.log_trip), sind hier nicht editierbar.
+  async _saveTrip(ev, startTs) {
+    ev.stopPropagation();
+    const entryId = this._configEntryId();
+    if (!entryId) return;
+    const state = this._formStateTrip[startTs] || {};
+    const startOrt = (state.startOrt || '').trim();
+    const endOrt = (state.endOrt || '').trim();
+    if (!startOrt || !endOrt) return;
+    await this._hass.callService('ev_assistant', 'log_trip', {
+      config_entry_id: entryId,
+      start_ts: startTs,
+      start_ort: startOrt,
+      end_ort: endOrt,
+    });
+    delete this._formStateTrip[startTs];
+    this._lastSignature = null;
+  }
+
+  async _discardTrip(ev, startTs) {
+    ev.stopPropagation();
+    const entryId = this._configEntryId();
+    if (!entryId) return;
+    await this._hass.callService('ev_assistant', 'discard_pending_trip', {
+      config_entry_id: entryId,
+      start_ts: startTs,
+    });
+    delete this._formStateTrip[startTs];
+    this._lastSignature = null;
+  }
+
+  _onInputTrip(startTs, key, e) {
+    const state = this._formStateTrip[startTs] || (this._formStateTrip[startTs] = {});
+    state[key] = e.target.value;
+  }
+
+  // ----- Fahrtenbuch-Historie nachtraeglich korrigieren -------------------
+  _toggleHistoryTrip(ev) {
+    ev.stopPropagation();
+    this._historyOpenTrip = !this._historyOpenTrip;
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _startEditHistoryTrip(ev, rec) {
+    ev.stopPropagation();
+    this._editStateTrip[rec.erfasst_ts] = {
+      startOrt: rec.start_ort || '',
+      endOrt: rec.end_ort || '',
+    };
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _cancelEditHistoryTrip(ev, erfasstTs) {
+    ev.stopPropagation();
+    delete this._editStateTrip[erfasstTs];
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _onHistoryInputTrip(erfasstTs, key, e) {
+    const state = this._editStateTrip[erfasstTs] || (this._editStateTrip[erfasstTs] = {});
+    state[key] = e.target.value;
+  }
+
+  async _saveHistoryEditTrip(ev, erfasstTs) {
+    ev.stopPropagation();
+    const entryId = this._configEntryId();
+    if (!entryId) return;
+    const state = this._editStateTrip[erfasstTs] || {};
+    const startOrt = (state.startOrt || '').trim();
+    const endOrt = (state.endOrt || '').trim();
+    if (!startOrt || !endOrt) return;
+    await this._hass.callService('ev_assistant', 'edit_trip', {
+      config_entry_id: entryId,
+      erfasst_ts: erfasstTs,
+      start_ort: startOrt,
+      end_ort: endOrt,
+    });
+    delete this._editStateTrip[erfasstTs];
+    this._lastSignature = null;
+  }
+
+  // ----- Fahrtenbuch-Eintrag loeschen --------------------------------------
+  _askDeleteHistoryTrip(ev, erfasstTs) {
+    ev.stopPropagation();
+    this._deleteConfirmTrip[erfasstTs] = true;
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _cancelDeleteHistoryTrip(ev, erfasstTs) {
+    ev.stopPropagation();
+    delete this._deleteConfirmTrip[erfasstTs];
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  async _confirmDeleteHistoryTrip(ev, erfasstTs) {
+    ev.stopPropagation();
+    const entryId = this._configEntryId();
+    if (!entryId) return;
+    await this._hass.callService('ev_assistant', 'delete_trip', {
+      config_entry_id: entryId,
+      erfasst_ts: erfasstTs,
+    });
+    delete this._deleteConfirmTrip[erfasstTs];
+    this._lastSignature = null;
+  }
+
   // ----- Rendering ---------------------------------------------------------
   _pendingList(ents) {
     return this._attr(ents.pending_binary, 'offene_ladungen') || [];
@@ -334,19 +476,44 @@ class EvAssistantCard extends HTMLElement {
     return this._attr(ents.last_cost, 'historie') || [];
   }
 
-  _renderCompact(ents, name, pendingList) {
+  _pendingTripList(ents) {
+    return this._attr(ents.trip_pending_binary, 'offene_fahrten') || [];
+  }
+
+  _tripHistoryList(ents) {
+    return this._attr(ents.last_trip_km, 'fahrtenbuch') || [];
+  }
+
+  // Fahrtenbuch-Sensoren gibt es nur ab EV Assistant v0.14.0 (Kilometerstand-
+  // Entitaet konfiguriert) -- ohne sie bleibt die gesamte Fahrtenbuch-Sektion
+  // ausgeblendet statt eine leere "0 km"-Box zu zeigen.
+  _hasTrip(ents) {
+    return !!(ents.trip_pending_binary || ents.trip_pending_estimate || ents.last_trip_km
+      || ents.trip_count || ents.total_trip_km);
+  }
+
+  _renderCompact(ents, name, pendingList, pendingTripList) {
     const count = this._val(ents.count);
     const totalKwh = this._val(ents.total_kwh);
     const n = pendingList.length;
-    const color = n ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)';
-    const icon = n ? '⚡' : '🔌';
-    const sub = n
-      ? n === 1
+    const nt = pendingTripList.length;
+    const pending = n || nt;
+    const color = pending ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)';
+    const icon = n ? '⚡' : nt ? '🚗' : '🔌';
+    let sub;
+    if (n) {
+      sub = n === 1
         ? `Fremdladung erkannt, ~${this._fmt(pendingList[0].energy_kwh, 1)} kWh`
-        : `${n} offene Fremdladungen`
-      : this._ok(count)
+        : `${n} offene Fremdladungen`;
+    } else if (nt) {
+      sub = nt === 1
+        ? `Fahrt erkannt, ${this._fmt(pendingTripList[0].km, 1)} km`
+        : `${nt} offene Fahrten`;
+    } else {
+      sub = this._ok(count)
         ? `${parseInt(count, 10)} Ladungen · ${this._fmt(totalKwh, 0)} kWh gesamt`
         : 'Keine Fremdladungen erfasst';
+    }
     return `
       <div class="card compact">
         <div class="ci" style="background:${color}22;color:${color}">${icon}</div>
@@ -354,7 +521,7 @@ class EvAssistantCard extends HTMLElement {
           <div class="name">${name}</div>
           <div class="sub">${sub}</div>
         </div>
-        ${n ? '<div class="chip warn">⚠ Offen</div>' : '<div class="chip ok">OK</div>'}
+        ${pending ? '<div class="chip warn">⚠ Offen</div>' : '<div class="chip ok">OK</div>'}
       </div>`;
   }
 
@@ -429,7 +596,73 @@ class EvAssistantCard extends HTMLElement {
       </div>`;
   }
 
-  _renderDetail(ents, name, pendingList, historyList) {
+  _renderPendingTripForm(p) {
+    const startTs = p.start_ts;
+    const state = this._formStateTrip[startTs] || (this._formStateTrip[startTs] = {});
+    if (state.startOrt === undefined) state.startOrt = '';
+    if (state.endOrt === undefined) state.endOrt = '';
+    return `
+      <div class="pending-box" data-start-ts="${startTs}">
+        <div class="pending-row">
+          <div><div class="dl">Strecke</div><div class="dv">${this._fmt(p.km, 1)} km</div></div>
+          <div><div class="dl">Kilometerstand</div><div class="dv">${this._fmt(p.odo_start, 0)} → ${this._fmt(p.odo_end, 0)}</div></div>
+          <div><div class="dl">Seit</div><div class="dv">${this._fmtDate(startTs)}</div></div>
+        </div>
+        <div class="form-row">
+          <label>Startort
+            <input type="text" value="${state.startOrt || ''}" class="trip-start-input" data-start-ts="${startTs}" />
+          </label>
+          <label>Zielort
+            <input type="text" value="${state.endOrt || ''}" class="trip-end-input" data-start-ts="${startTs}" />
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn trip-save" data-start-ts="${startTs}">Speichern</button>
+          <button class="btn trip-discard" data-start-ts="${startTs}">Verwerfen</button>
+        </div>
+      </div>`;
+  }
+
+  _renderTripHistoryRow(rec) {
+    const ts = rec.erfasst_ts;
+    const editing = this._editStateTrip[ts];
+    const deleting = this._deleteConfirmTrip[ts];
+    if (editing) {
+      return `
+        <div class="hist-row hist-edit" data-erfasst-ts="${ts}">
+          <div class="hist-date">${this._fmtDate(ts)}</div>
+          <input type="text" value="${editing.startOrt || ''}" class="trip-hist-start-input" placeholder="Startort" data-erfasst-ts="${ts}" />
+          <input type="text" value="${editing.endOrt || ''}" class="trip-hist-end-input" placeholder="Zielort" data-erfasst-ts="${ts}" />
+          <div class="hist-actions">
+            <button class="hist-btn trip-save" data-erfasst-ts="${ts}" title="Speichern">✓</button>
+            <button class="hist-btn trip-cancel" data-erfasst-ts="${ts}" title="Abbrechen">✕</button>
+          </div>
+        </div>`;
+    }
+    if (deleting) {
+      return `
+        <div class="hist-row hist-edit hist-delete-confirm" data-erfasst-ts="${ts}">
+          <div class="hist-date">${this._fmtDate(ts)}</div>
+          <div class="hist-confirm-text">Wirklich löschen? (${this._fmt(rec.km, 1)} km, ${rec.start_ort || '—'} → ${rec.end_ort || '—'})</div>
+          <div class="hist-actions">
+            <button class="hist-btn trip-confirm-delete" data-erfasst-ts="${ts}" title="Ja, löschen">✓</button>
+            <button class="hist-btn trip-cancel-delete" data-erfasst-ts="${ts}" title="Abbrechen">✕</button>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="hist-row trip-hist-row" data-erfasst-ts="${ts}">
+        <div class="hist-date">${this._fmtDate(ts)}</div>
+        <div class="hist-kwh">${this._fmt(rec.km, 1)} km</div>
+        <div class="trip-route">${rec.start_ort || '—'} → ${rec.end_ort || '—'}</div>
+        <div class="hist-row-actions">
+          <button class="hist-btn trip-edit" data-erfasst-ts="${ts}" title="Korrigieren">✎</button>
+          <button class="hist-btn trip-delete" data-erfasst-ts="${ts}" title="Löschen">🗑</button>
+        </div>
+      </div>`;
+  }
+
+  _renderDetail(ents, name, pendingList, historyList, pendingTripList, tripHistoryList) {
     const lastKwh = this._val(ents.last_kwh);
     const lastCost = this._val(ents.last_cost);
     const lastPrice = this._val(ents.last_price);
@@ -482,16 +715,51 @@ class EvAssistantCard extends HTMLElement {
           <div class="hist-toggle" data-action="toggle-history">${this._historyOpen ? '▾' : '▸'} Historie (${historyList.length}${historyList.length > 10 ? ', letzte 10' : ''})</div>
           ${this._historyOpen ? `<div class="hist-list">${historyList.slice(0, 10).map((rec) => this._renderHistoryRow(rec)).join('')}</div>` : ''}
         ` : ''}
+
+        ${this._hasTrip(ents) ? this._renderTripSection(ents, pendingTripList, tripHistoryList) : ''}
       </div>`;
+  }
+
+  _renderTripSection(ents, pendingTripList, tripHistoryList) {
+    const totalTripKm = this._val(ents.total_trip_km);
+    const tripCount = this._val(ents.trip_count);
+    const nt = pendingTripList.length;
+    return `
+      <div class="div"></div>
+      <div class="dh trip-section-header">
+        <div class="hl">
+          <div class="iw" style="background:${nt ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)'}22;color:${nt ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)'}">🚗</div>
+          <div>
+            <div class="name">Fahrtenbuch</div>
+            <div class="sub">${nt ? `${nt === 1 ? 'Fahrt' : nt + ' Fahrten'} wartet auf Ziel` : 'Keine offene Fahrt'}</div>
+          </div>
+        </div>
+        ${nt ? `<div class="chip warn">⚠ ${nt === 1 ? 'Offen' : nt + ' offen'}</div>` : '<div class="chip ok">OK</div>'}
+      </div>
+
+      ${pendingTripList.map((p) => this._renderPendingTripForm(p)).join('')}
+
+      <div class="metrics">
+        <div class="metric"><div class="ml">km gesamt</div><div class="mv">${this._fmt(totalTripKm, 0)}</div></div>
+        <div class="metric"><div class="ml">Anzahl</div><div class="mv">${this._ok(tripCount) ? parseInt(tripCount, 10) : '—'}</div></div>
+      </div>
+
+      ${tripHistoryList.length ? `
+        <div class="div"></div>
+        <div class="hist-toggle trip-hist-toggle">${this._historyOpenTrip ? '▾' : '▸'} Fahrtenbuch (${tripHistoryList.length}${tripHistoryList.length > 10 ? ', letzte 10' : ''})</div>
+        ${this._historyOpenTrip ? `<div class="hist-list">${tripHistoryList.slice(0, 10).map((rec) => this._renderTripHistoryRow(rec)).join('')}</div>` : ''}
+      ` : ''}`;
   }
 
   _render(ents) {
     const name = this._getDeviceName();
     const pendingList = this._pendingList(ents);
     const historyList = this._historyList(ents);
+    const pendingTripList = this._pendingTripList(ents);
+    const tripHistoryList = this._tripHistoryList(ents);
     const html = this._mode === 'detail'
-      ? this._renderDetail(ents, name, pendingList, historyList)
-      : this._renderCompact(ents, name, pendingList);
+      ? this._renderDetail(ents, name, pendingList, historyList, pendingTripList, tripHistoryList)
+      : this._renderCompact(ents, name, pendingList, pendingTripList);
 
     this.shadowRoot.innerHTML = `<style>
       :host{display:block;container-type:inline-size;container-name:evac}*{box-sizing:border-box;margin:0;padding:0}
@@ -544,6 +812,16 @@ class EvAssistantCard extends HTMLElement {
       .hist-actions .confirm-delete{color:var(--error-color,#db4437)}
       .hist-actions .cancel-delete{color:var(--secondary-text-color)}
 
+      .dh.trip-section-header{cursor:default;margin-bottom:10px}
+      .btn.trip-save{background:var(--success-color,#10b981);color:#fff}
+      .btn.trip-discard{background:var(--secondary-background-color,rgba(0,0,0,.08));color:var(--primary-text-color)}
+      .hist-actions .trip-save{color:var(--success-color,#10b981)}
+      .hist-actions .trip-cancel{color:var(--error-color,#db4437)}
+      .hist-actions .trip-confirm-delete{color:var(--error-color,#db4437)}
+      .hist-actions .trip-cancel-delete{color:var(--secondary-text-color)}
+      .trip-hist-row{grid-template-columns:1fr .7fr 1.6fr auto}
+      .trip-route{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
       @container evac (max-width: 340px) {
         .compact{padding:10px 12px;gap:8px}
         .ci,.iw{width:32px;height:32px;font-size:17px}
@@ -553,6 +831,8 @@ class EvAssistantCard extends HTMLElement {
         .form-row,.g2{grid-template-columns:1fr}
         .hist-row{grid-template-columns:1fr 1fr;grid-template-areas:"date date" "kwh price" "cost edit"}
         .hist-row .hist-date{grid-area:date}.hist-row .hist-kwh{grid-area:kwh}.hist-row .hist-price{grid-area:price}.hist-row .hist-cost{grid-area:cost}.hist-row .hist-row-actions{grid-area:edit;justify-self:end}
+        .trip-hist-row{grid-template-columns:1fr 1fr;grid-template-areas:"date date" "km route" "edit edit"}
+        .trip-hist-row .hist-date{grid-area:date}.trip-hist-row .hist-kwh{grid-area:km}.trip-hist-row .trip-route{grid-area:route}.trip-hist-row .hist-row-actions{grid-area:edit;justify-self:end}
       }
       @container evac (min-width: 561px) {
         .metrics{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
@@ -610,6 +890,51 @@ class EvAssistantCard extends HTMLElement {
       this.shadowRoot.querySelectorAll('.hist-btn.confirm-delete').forEach((el) => {
         el.addEventListener('click', (e) => this._confirmDeleteHistory(e, parseFloat(el.dataset.erfasstTs)));
       });
+
+      // ----- Fahrtenbuch: dieselbe Verdrahtung wie oben, eigene Klassen ---
+      this.shadowRoot.querySelectorAll('.trip-start-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onInputTrip(parseFloat(el.dataset.startTs), 'startOrt', e));
+      });
+      this.shadowRoot.querySelectorAll('.trip-end-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onInputTrip(parseFloat(el.dataset.startTs), 'endOrt', e));
+      });
+      this.shadowRoot.querySelectorAll('.btn.trip-save').forEach((el) => {
+        el.addEventListener('click', (e) => this._saveTrip(e, parseFloat(el.dataset.startTs)));
+      });
+      this.shadowRoot.querySelectorAll('.btn.trip-discard').forEach((el) => {
+        el.addEventListener('click', (e) => this._discardTrip(e, parseFloat(el.dataset.startTs)));
+      });
+
+      const tripHistToggle = this.shadowRoot.querySelector('.trip-hist-toggle');
+      if (tripHistToggle) tripHistToggle.addEventListener('click', (e) => this._toggleHistoryTrip(e));
+      this.shadowRoot.querySelectorAll('.hist-btn.trip-edit').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          const ts = parseFloat(el.dataset.erfasstTs);
+          const rec = tripHistoryList.find((r) => r.erfasst_ts === ts);
+          if (rec) this._startEditHistoryTrip(e, rec);
+        });
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.trip-cancel').forEach((el) => {
+        el.addEventListener('click', (e) => this._cancelEditHistoryTrip(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.trip-save').forEach((el) => {
+        el.addEventListener('click', (e) => this._saveHistoryEditTrip(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.trip-hist-start-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onHistoryInputTrip(parseFloat(el.dataset.erfasstTs), 'startOrt', e));
+      });
+      this.shadowRoot.querySelectorAll('.trip-hist-end-input').forEach((el) => {
+        el.addEventListener('input', (e) => this._onHistoryInputTrip(parseFloat(el.dataset.erfasstTs), 'endOrt', e));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.trip-delete').forEach((el) => {
+        el.addEventListener('click', (e) => this._askDeleteHistoryTrip(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.trip-cancel-delete').forEach((el) => {
+        el.addEventListener('click', (e) => this._cancelDeleteHistoryTrip(e, parseFloat(el.dataset.erfasstTs)));
+      });
+      this.shadowRoot.querySelectorAll('.hist-btn.trip-confirm-delete').forEach((el) => {
+        el.addEventListener('click', (e) => this._confirmDeleteHistoryTrip(e, parseFloat(el.dataset.erfasstTs)));
+      });
     }
   }
 
@@ -624,10 +949,10 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'ev-assistant-card',
   name: 'EV Assistant Card',
-  description: 'Zeigt Fremdladungen an und erfasst kWh/Preis direkt in der Karte.',
+  description: 'Zeigt Fremdladungen und Fahrtenbuch an und erfasst beides direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.4.1 geladen');
+console.log('[ev-assistant-card] v1.5.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)
