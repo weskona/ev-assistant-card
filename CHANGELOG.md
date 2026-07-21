@@ -2,6 +2,24 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.0] - 2026-07-21
+
+### Added
+
+- **Redesigned detail-view status header**, inspired by the Omnibattery dashboard: an animated
+  SVG ring shows the charge-efficiency percentage (measured, or the manual fallback while still
+  calibrating) instead of the old small icon tile, with pill-style status badges next to it for
+  "Ladung offen/OK" and (if configured) "Fahrt offen/OK" instead of plain text.
+- **Fremdladung vs. Heimladen bar comparison**: when a wallbox energy meter is configured
+  (`home_kwh`/`home_cost` available), the flat kWh/cost/count tiles are replaced by two
+  bar-groups ("Energie", "Kosten") comparing external vs. home charging at a glance, each bar
+  scaled relative to the larger of the two values. Without a wallbox meter configured, the
+  original flat tiles remain unchanged — no meaningless single-bar "comparison".
+- Chips are now fully rounded (pill-shaped) for visual consistency with the new status badges.
+
+No new services or entities required — purely a presentation upgrade using data the card
+already reads.
+
 ## [1.5.2] - 2026-07-21
 
 ### Changed

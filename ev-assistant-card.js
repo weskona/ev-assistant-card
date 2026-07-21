@@ -752,6 +752,38 @@ class EvAssistantCard extends HTMLElement {
       </div>`;
   }
 
+  // ----- Ring-/Bar-Widgets (Anregung: Omnibattery-Dashboard) --------------
+  // Reiner SVG-Kreis (stroke-dasharray/-dashoffset) statt conic-gradient --
+  // zuverlaessiger uebergreifend animierbar (CSS-Transition auf dashoffset)
+  // und ohne Browser-Eigenheiten bei runden Farbverlaeufen.
+  _ringSvg(percent, size, color) {
+    const p = Math.max(0, Math.min(100, percent || 0));
+    const r = (size - 8) / 2;
+    const c = 2 * Math.PI * r;
+    const offset = c * (1 - p / 100);
+    const half = size / 2;
+    return `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="ring-svg">
+        <circle cx="${half}" cy="${half}" r="${r}" class="ring-track" stroke-width="8" fill="none"/>
+        <circle cx="${half}" cy="${half}" r="${r}" class="ring-fill" stroke="${color}" stroke-width="8" fill="none"
+          stroke-dasharray="${c}" stroke-dashoffset="${offset}" stroke-linecap="round"
+          transform="rotate(-90 ${half} ${half})"/>
+      </svg>`;
+  }
+
+  // Balkenzeile innerhalb einer Vergleichsgruppe (z.B. Fremdladung vs.
+  // Heimladen) -- Fuellstand relativ zum groessten Wert der Gruppe, keine
+  // absolute Prozentskala.
+  _renderBarRow(label, value, unit, maxValue, color) {
+    const pct = maxValue > 0 ? Math.min(100, (value / maxValue) * 100) : 0;
+    const decimals = unit === '€' ? 2 : 1;
+    return `
+      <div class="bar-row">
+        <div class="bar-row-top"><span class="bar-label">${label}</span><span class="bar-value">${this._fmt(value, decimals)} ${unit}</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      </div>`;
+  }
+
   _renderDetail(ents, name, pendingList, historyList, pendingTripList, tripHistoryList) {
     const lastKwh = this._val(ents.last_kwh);
     const lastCost = this._val(ents.last_cost);
@@ -759,37 +791,66 @@ class EvAssistantCard extends HTMLElement {
     const totalKwh = this._val(ents.total_kwh);
     const totalCost = this._val(ents.total_cost);
     const count = this._val(ents.count);
+    const homeKwh = this._val(ents.home_kwh);
+    const homeCost = this._val(ents.home_cost);
 
     const eff = this._val(ents.measured_efficiency);
     const effSessions = this._attr(ents.measured_efficiency, 'anzahl_sessions');
     const effNeeded = this._attr(ents.measured_efficiency, 'benoetigte_sessions');
-    const effInUse = this._attr(ents.measured_efficiency, 'wird_verwendet');
     const effManual = this._attr(ents.measured_efficiency, 'manueller_wert_prozent');
+    const effIsMeasured = this._ok(eff);
+    const effPercent = effIsMeasured ? parseFloat(eff) : (this._ok(effManual) ? parseFloat(effManual) : null);
 
     const n = pendingList.length;
+    const nt = pendingTripList.length;
+    const hasHomeSplit = this._ok(homeKwh) && this._ok(totalKwh);
+    const hasCostSplit = this._ok(homeCost) && this._ok(totalCost);
+    const energyMax = hasHomeSplit ? Math.max(parseFloat(totalKwh), parseFloat(homeKwh)) : 0;
+    const costMax = hasCostSplit ? Math.max(parseFloat(totalCost), parseFloat(homeCost)) : 0;
 
     return `
       <div class="card detail">
-        <div class="dh">
-          <div class="hl">
-            <div class="iw" style="background:${n ? 'var(--warning-color,#f59e0b)22' : 'var(--success-color,#10b981)22'};color:${n ? 'var(--warning-color,#f59e0b)' : 'var(--success-color,#10b981)'}">${n ? '⚡' : '🔌'}</div>
-            <div>
-              <div class="name">${name}</div>
-              <div class="sub">Fremdladungs-Erfassung</div>
+        <div class="status-block">
+          <div class="status-name">${name}</div>
+          <div class="status-body">
+            <div class="ring-wrap">
+              ${this._ringSvg(effPercent, 76, effIsMeasured ? 'var(--success-color,#10b981)' : 'var(--primary-color,#03a9f4)')}
+              <div class="ring-label">
+                <div class="ring-value">${effPercent !== null ? this._fmt(effPercent, 0) + '%' : '—'}</div>
+                <div class="ring-caption">Wirkungsgrad${effIsMeasured ? '' : ' (manuell)'}</div>
+              </div>
+            </div>
+            <div class="status-pills">
+              <div class="pill ${n ? 'warn' : 'ok'}">⚡ ${n ? (n === 1 ? 'Ladung offen' : n + ' Ladungen offen') : 'Keine offene Ladung'}</div>
+              ${this._hasTrip(ents) ? `<div class="pill ${nt ? 'warn' : 'ok'}">🚗 ${nt ? (nt === 1 ? 'Fahrt offen' : nt + ' Fahrten offen') : 'Keine offene Fahrt'}</div>` : ''}
             </div>
           </div>
-          ${n ? `<div class="chip warn">⚠ ${n === 1 ? 'Offen' : n + ' offen'}</div>` : '<div class="chip ok">Keine offene Ladung</div>'}
         </div>
 
         ${pendingList.map((p) => this._renderPendingForm(p, lastPrice)).join('')}
 
         <div class="div"></div>
 
-        <div class="metrics">
-          <div class="metric"><div class="ml">kWh gesamt</div><div class="mv">${this._fmt(totalKwh, 0)}</div></div>
-          <div class="metric"><div class="ml">Kosten gesamt</div><div class="mv">${this._fmt(totalCost, 0)} €</div></div>
-          <div class="metric"><div class="ml">Anzahl</div><div class="mv">${this._ok(count) ? parseInt(count, 10) : '—'}</div></div>
-        </div>
+        ${hasHomeSplit ? `
+          <div class="bar-group">
+            <div class="bar-group-title">Energie (kWh)</div>
+            ${this._renderBarRow('Fremdladung', parseFloat(totalKwh), 'kWh', energyMax, 'var(--warning-color,#f59e0b)')}
+            ${this._renderBarRow('Heimladen', parseFloat(homeKwh), 'kWh', energyMax, 'var(--success-color,#10b981)')}
+          </div>
+          ${hasCostSplit ? `
+          <div class="bar-group">
+            <div class="bar-group-title">Kosten (€)</div>
+            ${this._renderBarRow('Fremdladung', parseFloat(totalCost), '€', costMax, 'var(--warning-color,#f59e0b)')}
+            ${this._renderBarRow('Heimladen', parseFloat(homeCost), '€', costMax, 'var(--success-color,#10b981)')}
+          </div>` : ''}
+          <div class="bar-group-caption">${this._ok(count) ? parseInt(count, 10) : '—'} Fremdladungen bestätigt</div>
+        ` : `
+          <div class="metrics">
+            <div class="metric"><div class="ml">kWh gesamt</div><div class="mv">${this._fmt(totalKwh, 0)}</div></div>
+            <div class="metric"><div class="ml">Kosten gesamt</div><div class="mv">${this._fmt(totalCost, 0)} €</div></div>
+            <div class="metric"><div class="ml">Anzahl</div><div class="mv">${this._ok(count) ? parseInt(count, 10) : '—'}</div></div>
+          </div>
+        `}
 
         <div class="div"></div>
 
@@ -797,7 +858,7 @@ class EvAssistantCard extends HTMLElement {
           ${this._ok(lastKwh) ? `<div><div class="dl">Letzte kWh</div><div class="dv">${this._fmt(lastKwh, 1)} kWh</div></div>` : ''}
           ${this._ok(lastCost) ? `<div><div class="dl">Letzte Kosten</div><div class="dv">${this._fmt(lastCost, 2)} €</div></div>` : ''}
           ${this._ok(lastPrice) ? `<div><div class="dl">Letzter Preis</div><div class="dv">${this._fmt(lastPrice, 3)} €/kWh</div></div>` : ''}
-          ${this._ok(eff) ? `<div><div class="dl">Ladewirkungsgrad ${effInUse ? '(gemessen)' : '(manuell)'}</div><div class="dv">${this._fmt(effInUse ? eff : effManual, 1)} %${!effInUse ? ` <span class="hint-inline">(${effSessions}/${effNeeded} Sessions)</span>` : ''}</div></div>` : ''}
+          ${!effIsMeasured && this._ok(effSessions) ? `<div><div class="dl">Wirkungsgrad-Kalibrierung</div><div class="dv">${effSessions}/${effNeeded} Sessions</div></div>` : ''}
         </div>
 
         ${historyList.length ? `
@@ -860,9 +921,30 @@ class EvAssistantCard extends HTMLElement {
       .ci-info{flex:1 1 120px;min-width:0}
       .name{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .sub{font-size:12px;color:var(--secondary-text-color)}
-      .chip{font-size:11px;font-weight:500;padding:3px 8px;border-radius:6px;white-space:nowrap;flex-shrink:0}
+      .chip{font-size:11px;font-weight:500;padding:3px 8px;border-radius:999px;white-space:nowrap;flex-shrink:0}
       .warn{background:rgba(245,158,11,.15);color:#b45309}.ok{background:rgba(16,185,129,.15);color:#047857}
       .detail{padding:14px 16px;cursor:default}
+      .status-block{margin-bottom:12px}
+      .status-name{font-size:15px;font-weight:600;margin-bottom:10px}
+      .status-body{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+      .ring-wrap{position:relative;width:76px;height:76px;flex-shrink:0}
+      .ring-svg{display:block;width:100%;height:100%}
+      .ring-track{stroke:var(--divider-color,rgba(0,0,0,.1))}
+      .ring-fill{transition:stroke-dashoffset .6s ease}
+      .ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:1px}
+      .ring-value{font-size:16px;font-weight:700;line-height:1.1}
+      .ring-caption{font-size:9px;color:var(--secondary-text-color);line-height:1.2;max-width:60px}
+      .status-pills{display:flex;flex-direction:column;gap:6px;flex:1 1 140px;min-width:0}
+      .pill{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:500;padding:5px 10px;border-radius:999px;width:fit-content;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .bar-group{margin-bottom:10px}
+      .bar-group-title{font-size:11px;color:var(--secondary-text-color);margin-bottom:6px;font-weight:500}
+      .bar-row{margin-bottom:6px}
+      .bar-row-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+      .bar-label{color:var(--secondary-text-color)}
+      .bar-value{font-weight:500}
+      .bar-track{height:6px;border-radius:3px;background:var(--secondary-background-color,rgba(0,0,0,.06));overflow:hidden}
+      .bar-fill{height:100%;border-radius:3px;transition:width .6s ease}
+      .bar-group-caption{font-size:11px;color:var(--secondary-text-color);margin:2px 0 4px}
       .dh{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 10px;margin-bottom:12px;cursor:pointer}
       .hl{display:flex;align-items:center;gap:10px;flex:1 1 160px;min-width:0}
       .pending-box{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:12px;margin-bottom:12px}
@@ -928,6 +1010,9 @@ class EvAssistantCard extends HTMLElement {
         .hist-row .hist-date{grid-area:date}.hist-row .hist-kwh{grid-area:kwh}.hist-row .hist-price{grid-area:price}.hist-row .hist-cost{grid-area:cost}.hist-row .hist-row-actions{grid-area:edit;justify-self:end}
         .trip-hist-row{grid-template-columns:1fr 1fr;grid-template-areas:"date date" "km route" "edit edit"}
         .trip-hist-row .hist-date{grid-area:date}.trip-hist-row .hist-kwh{grid-area:km}.trip-hist-row .trip-route{grid-area:route}.trip-hist-row .hist-row-actions{grid-area:edit;justify-self:end}
+        .ring-wrap{width:60px;height:60px}
+        .ring-value{font-size:13px}
+        .ring-caption{font-size:8px;max-width:48px}
       }
       @container evac (min-width: 561px) {
         .metrics{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
@@ -1059,7 +1144,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen und Fahrtenbuch an und erfasst beides direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.5.2 geladen');
+console.log('[ev-assistant-card] v1.6.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)
