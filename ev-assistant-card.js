@@ -17,14 +17,21 @@ class EvAssistantCard extends HTMLElement {
     // Loeschen-Button, ein schneller Doppel-Klick/-Tap dort wuerde sonst die
     // Nachfrage versehentlich sofort bestaetigen (siehe _confirmDeleteHistory).
     this._deleteConfirmAt = {};
+    // Verwerfen-Bestaetigung pro offener Ladung, keyed by start_ts (analog
+    // _deleteConfirm/_deleteConfirmAt, aber fuer den "Verwerfen"-Button im
+    // Pending-Formular statt den Loeschen-Button in der Historie).
+    this._discardConfirm = {};
+    this._discardConfirmAt = {};
     this._historyOpen = false;
-    // Fahrtenbuch: dieselben drei Zustaende wie oben, aber fuer offene/
+    // Fahrtenbuch: dieselben Zustaende wie oben, aber fuer offene/
     // bestaetigte Fahrten statt Fremdladungen (start_ort/end_ort statt
     // kwh/price, sonst identisches Muster).
     this._formStateTrip = {};
     this._editStateTrip = {};
     this._deleteConfirmTrip = {};
     this._deleteConfirmAtTrip = {};
+    this._discardConfirmTrip = {};
+    this._discardConfirmAtTrip = {};
     this._historyOpenTrip = false;
     this._lastSignature = null;
   }
@@ -259,8 +266,32 @@ class EvAssistantCard extends HTMLElement {
     this._lastSignature = null;
   }
 
+  // "Verwerfen" verwirft eine erkannte, aber noch unbestaetigte Ladung
+  // unwiderruflich -- daher wie beim Loeschen eines Historien-Eintrags erst
+  // eine Inline-Nachfrage statt sofort zu verwerfen (_askDiscard oeffnet sie,
+  // _discard fuehrt sie nach Bestaetigung aus, _cancelDiscard bricht ab).
+  _askDiscard(ev, startTs) {
+    ev.stopPropagation();
+    this._discardConfirm[startTs] = true;
+    this._discardConfirmAt[startTs] = Date.now();
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _cancelDiscard(ev, startTs) {
+    ev.stopPropagation();
+    delete this._discardConfirm[startTs];
+    delete this._discardConfirmAt[startTs];
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
   async _discard(ev, startTs) {
     ev.stopPropagation();
+    // Derselbe Doppel-Klick/-Tap-Schutz wie bei _confirmDeleteHistory: der
+    // Bestaetigen-Button erscheint an der Stelle des vorherigen Verwerfen-
+    // Buttons.
+    if (Date.now() - (this._discardConfirmAt[startTs] || 0) < 400) return;
     const entryId = this._configEntryId();
     if (!entryId) return;
     await this._hass.callService('ev_assistant', 'discard_pending', {
@@ -268,6 +299,8 @@ class EvAssistantCard extends HTMLElement {
       start_ts: startTs,
     });
     delete this._formState[startTs];
+    delete this._discardConfirm[startTs];
+    delete this._discardConfirmAt[startTs];
     this._lastSignature = null;
   }
 
@@ -389,8 +422,26 @@ class EvAssistantCard extends HTMLElement {
     this._lastSignature = null;
   }
 
+  // Gleiches Bestaetigen-vor-Verwerfen-Muster wie _askDiscard/_discard oben.
+  _askDiscardTrip(ev, startTs) {
+    ev.stopPropagation();
+    this._discardConfirmTrip[startTs] = true;
+    this._discardConfirmAtTrip[startTs] = Date.now();
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
+  _cancelDiscardTrip(ev, startTs) {
+    ev.stopPropagation();
+    delete this._discardConfirmTrip[startTs];
+    delete this._discardConfirmAtTrip[startTs];
+    this._lastSignature = null;
+    this._maybeRender();
+  }
+
   async _discardTrip(ev, startTs) {
     ev.stopPropagation();
+    if (Date.now() - (this._discardConfirmAtTrip[startTs] || 0) < 400) return;
     const entryId = this._configEntryId();
     if (!entryId) return;
     await this._hass.callService('ev_assistant', 'discard_pending_trip', {
@@ -398,6 +449,8 @@ class EvAssistantCard extends HTMLElement {
       start_ts: startTs,
     });
     delete this._formStateTrip[startTs];
+    delete this._discardConfirmTrip[startTs];
+    delete this._discardConfirmAtTrip[startTs];
     this._lastSignature = null;
   }
 
@@ -568,10 +621,18 @@ class EvAssistantCard extends HTMLElement {
             <input type="number" step="0.001" min="0" value="${state.price || ''}" class="price-input" data-start-ts="${startTs}" id="price-input-${safeTs}" />
           </label>
         </div>
-        <div class="form-actions">
-          <button class="btn save" data-start-ts="${startTs}">Speichern</button>
-          <button class="btn discard" data-start-ts="${startTs}">Verwerfen</button>
-        </div>
+        ${this._discardConfirm[startTs] ? `
+          <div class="discard-confirm-text">Wirklich verwerfen? Die Schätzung geht verloren.</div>
+          <div class="form-actions">
+            <button class="btn confirm-discard" data-start-ts="${startTs}">Ja, verwerfen</button>
+            <button class="btn cancel-discard" data-start-ts="${startTs}">Abbrechen</button>
+          </div>
+        ` : `
+          <div class="form-actions">
+            <button class="btn save" data-start-ts="${startTs}">Speichern</button>
+            <button class="btn discard" data-start-ts="${startTs}">Verwerfen</button>
+          </div>
+        `}
         <div class="hint">Quelle der Schätzung: ${p.energy_source || '—'}</div>
       </div>`;
   }
@@ -637,10 +698,18 @@ class EvAssistantCard extends HTMLElement {
             <input type="text" value="${state.endOrt || ''}" class="trip-end-input" data-start-ts="${startTs}" />
           </label>
         </div>
-        <div class="form-actions">
-          <button class="btn trip-save" data-start-ts="${startTs}">Speichern</button>
-          <button class="btn trip-discard" data-start-ts="${startTs}">Verwerfen</button>
-        </div>
+        ${this._discardConfirmTrip[startTs] ? `
+          <div class="discard-confirm-text">Wirklich verwerfen? Die Erkennung geht verloren.</div>
+          <div class="form-actions">
+            <button class="btn trip-confirm-discard" data-start-ts="${startTs}">Ja, verwerfen</button>
+            <button class="btn trip-cancel-discard" data-start-ts="${startTs}">Abbrechen</button>
+          </div>
+        ` : `
+          <div class="form-actions">
+            <button class="btn trip-save" data-start-ts="${startTs}">Speichern</button>
+            <button class="btn trip-discard" data-start-ts="${startTs}">Verwerfen</button>
+          </div>
+        `}
       </div>`;
   }
 
@@ -805,6 +874,9 @@ class EvAssistantCard extends HTMLElement {
       .btn{flex:1;padding:8px 12px;border-radius:6px;border:none;font-size:13px;font-weight:500;cursor:pointer}
       .btn.save{background:var(--success-color,#10b981);color:#fff}
       .btn.discard{background:var(--secondary-background-color,rgba(0,0,0,.08));color:var(--primary-text-color)}
+      .btn.confirm-discard{background:var(--error-color,#db4437);color:#fff}
+      .btn.cancel-discard{background:var(--secondary-background-color,rgba(0,0,0,.08));color:var(--primary-text-color)}
+      .discard-confirm-text{font-size:12px;color:var(--primary-text-color);margin-bottom:8px}
       .hint{font-size:11px;color:var(--secondary-text-color);margin-top:8px}
       .hint-inline{font-size:10px;color:var(--secondary-text-color)}
       .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px;margin-bottom:4px}
@@ -836,6 +908,8 @@ class EvAssistantCard extends HTMLElement {
       .dh.trip-section-header{cursor:default;margin-bottom:10px}
       .btn.trip-save{background:var(--success-color,#10b981);color:#fff}
       .btn.trip-discard{background:var(--secondary-background-color,rgba(0,0,0,.08));color:var(--primary-text-color)}
+      .btn.trip-confirm-discard{background:var(--error-color,#db4437);color:#fff}
+      .btn.trip-cancel-discard{background:var(--secondary-background-color,rgba(0,0,0,.08));color:var(--primary-text-color)}
       .hist-actions .trip-save{color:var(--success-color,#10b981)}
       .hist-actions .trip-cancel{color:var(--error-color,#db4437)}
       .hist-actions .trip-confirm-delete{color:var(--error-color,#db4437)}
@@ -878,7 +952,13 @@ class EvAssistantCard extends HTMLElement {
         el.addEventListener('click', (e) => this._save(e, parseFloat(el.dataset.startTs)));
       });
       this.shadowRoot.querySelectorAll('.btn.discard').forEach((el) => {
+        el.addEventListener('click', (e) => this._askDiscard(e, parseFloat(el.dataset.startTs)));
+      });
+      this.shadowRoot.querySelectorAll('.btn.confirm-discard').forEach((el) => {
         el.addEventListener('click', (e) => this._discard(e, parseFloat(el.dataset.startTs)));
+      });
+      this.shadowRoot.querySelectorAll('.btn.cancel-discard').forEach((el) => {
+        el.addEventListener('click', (e) => this._cancelDiscard(e, parseFloat(el.dataset.startTs)));
       });
 
       const histToggle = this.shadowRoot.querySelector('.hist-toggle');
@@ -923,7 +1003,13 @@ class EvAssistantCard extends HTMLElement {
         el.addEventListener('click', (e) => this._saveTrip(e, parseFloat(el.dataset.startTs)));
       });
       this.shadowRoot.querySelectorAll('.btn.trip-discard').forEach((el) => {
+        el.addEventListener('click', (e) => this._askDiscardTrip(e, parseFloat(el.dataset.startTs)));
+      });
+      this.shadowRoot.querySelectorAll('.btn.trip-confirm-discard').forEach((el) => {
         el.addEventListener('click', (e) => this._discardTrip(e, parseFloat(el.dataset.startTs)));
+      });
+      this.shadowRoot.querySelectorAll('.btn.trip-cancel-discard').forEach((el) => {
+        el.addEventListener('click', (e) => this._cancelDiscardTrip(e, parseFloat(el.dataset.startTs)));
       });
 
       const tripHistToggle = this.shadowRoot.querySelector('.trip-hist-toggle');
@@ -973,7 +1059,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen und Fahrtenbuch an und erfasst beides direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.5.1 geladen');
+console.log('[ev-assistant-card] v1.5.2 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

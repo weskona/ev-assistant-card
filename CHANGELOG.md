@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.2] - 2026-07-21
+
+### Changed
+
+- **"Verwerfen" (discard) now asks for confirmation first**, for both a pending Fremdladung and
+  a pending Fahrtenbuch trip. Previously it called `discard_pending`/`discard_pending_trip`
+  immediately on click, with no way back — a detected-but-unconfirmed estimate was gone the
+  instant you misclicked. Now shows an inline "wirklich verwerfen?" prompt (kWh/price or
+  start/end-location draft is preserved if you cancel), protected by the same 400ms
+  double-click/double-tap guard added for delete confirmations in 1.5.1.
+
 ## [1.5.1] - 2026-07-21
 
 ### Fixed
