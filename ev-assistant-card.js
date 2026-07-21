@@ -12,6 +12,11 @@ class EvAssistantCard extends HTMLElement {
     // Loesch-Bestaetigung pro Historie-Eintrag, keyed by erfasst_ts (true
     // waehrend die "wirklich loeschen?"-Nachfrage angezeigt wird).
     this._deleteConfirm = {};
+    // Zeitpunkt (Date.now()), zu dem die Nachfrage geoeffnet wurde -- der
+    // "Ja, loeschen"-Button erscheint an derselben Stelle wie der urspruengliche
+    // Loeschen-Button, ein schneller Doppel-Klick/-Tap dort wuerde sonst die
+    // Nachfrage versehentlich sofort bestaetigen (siehe _confirmDeleteHistory).
+    this._deleteConfirmAt = {};
     this._historyOpen = false;
     // Fahrtenbuch: dieselben drei Zustaende wie oben, aber fuer offene/
     // bestaetigte Fahrten statt Fremdladungen (start_ort/end_ort statt
@@ -19,6 +24,7 @@ class EvAssistantCard extends HTMLElement {
     this._formStateTrip = {};
     this._editStateTrip = {};
     this._deleteConfirmTrip = {};
+    this._deleteConfirmAtTrip = {};
     this._historyOpenTrip = false;
     this._lastSignature = null;
   }
@@ -330,6 +336,7 @@ class EvAssistantCard extends HTMLElement {
   _askDeleteHistory(ev, erfasstTs) {
     ev.stopPropagation();
     this._deleteConfirm[erfasstTs] = true;
+    this._deleteConfirmAt[erfasstTs] = Date.now();
     this._lastSignature = null;
     this._maybeRender();
   }
@@ -337,12 +344,18 @@ class EvAssistantCard extends HTMLElement {
   _cancelDeleteHistory(ev, erfasstTs) {
     ev.stopPropagation();
     delete this._deleteConfirm[erfasstTs];
+    delete this._deleteConfirmAt[erfasstTs];
     this._lastSignature = null;
     this._maybeRender();
   }
 
   async _confirmDeleteHistory(ev, erfasstTs) {
     ev.stopPropagation();
+    // Der "Ja, loeschen"-Button erscheint an derselben Stelle wie zuvor der
+    // Loeschen-Button -- ein schneller Doppel-Klick/-Tap darauf wuerde sonst
+    // die Nachfrage ungewollt sofort bestaetigen. Ein zu schnell (< 400ms
+    // nach dem Oeffnen der Nachfrage) eintreffender Klick wird ignoriert.
+    if (Date.now() - (this._deleteConfirmAt[erfasstTs] || 0) < 400) return;
     const entryId = this._configEntryId();
     if (!entryId) return;
     await this._hass.callService('ev_assistant', 'delete_charge', {
@@ -350,6 +363,7 @@ class EvAssistantCard extends HTMLElement {
       erfasst_ts: erfasstTs,
     });
     delete this._deleteConfirm[erfasstTs];
+    delete this._deleteConfirmAt[erfasstTs];
     this._lastSignature = null;
   }
 
@@ -444,6 +458,7 @@ class EvAssistantCard extends HTMLElement {
   _askDeleteHistoryTrip(ev, erfasstTs) {
     ev.stopPropagation();
     this._deleteConfirmTrip[erfasstTs] = true;
+    this._deleteConfirmAtTrip[erfasstTs] = Date.now();
     this._lastSignature = null;
     this._maybeRender();
   }
@@ -451,12 +466,17 @@ class EvAssistantCard extends HTMLElement {
   _cancelDeleteHistoryTrip(ev, erfasstTs) {
     ev.stopPropagation();
     delete this._deleteConfirmTrip[erfasstTs];
+    delete this._deleteConfirmAtTrip[erfasstTs];
     this._lastSignature = null;
     this._maybeRender();
   }
 
   async _confirmDeleteHistoryTrip(ev, erfasstTs) {
     ev.stopPropagation();
+    // Gleicher Schutz wie _confirmDeleteHistory (siehe Kommentar dort): ein
+    // schneller Doppel-Klick/-Tap auf den Loeschen-Button darf die direkt an
+    // derselben Stelle nachgerenderte Nachfrage nicht versehentlich bestaetigen.
+    if (Date.now() - (this._deleteConfirmAtTrip[erfasstTs] || 0) < 400) return;
     const entryId = this._configEntryId();
     if (!entryId) return;
     await this._hass.callService('ev_assistant', 'delete_trip', {
@@ -464,6 +484,7 @@ class EvAssistantCard extends HTMLElement {
       erfasst_ts: erfasstTs,
     });
     delete this._deleteConfirmTrip[erfasstTs];
+    delete this._deleteConfirmAtTrip[erfasstTs];
     this._lastSignature = null;
   }
 
@@ -952,7 +973,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen und Fahrtenbuch an und erfasst beides direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.5.0 geladen');
+console.log('[ev-assistant-card] v1.5.1 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)

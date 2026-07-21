@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.1] - 2026-07-21
+
+### Fixed
+
+- **Accidental delete via double-click/double-tap**: the "really delete?" confirmation button
+  renders in the same spot as the delete button it replaces, so a fast double-click/double-tap
+  on delete could land its second click on the confirm button and delete the entry without the
+  user ever consciously seeing the confirmation. Both the charge-history and Fahrtenbuch delete
+  confirmations now ignore a confirm click that arrives within 400ms of the confirmation opening
+  — the same click/tap that opened it can no longer also close it. Reported after accidentally
+  deleting a Fahrtenbuch entry this way.
+
 ## [1.5.0] - 2026-07-21
 
 ### Added
