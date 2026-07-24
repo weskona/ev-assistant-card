@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.7.0] - 2026-07-24
+
+### Added
+
+- **Prefill start/end location from EV Assistant's GPS/zone suggestion** (requires
+  EV Assistant v0.15.0+ with an optional `gps_entity` configured): if a pending trip carries
+  `start_ort_vorschlag`/`end_ort_vorschlag` attributes, the trip form's Startort/Zielort fields
+  now default to those values instead of empty strings — still freely editable/clearable before
+  confirming. Falls back to empty fields exactly as before when the attributes aren't present
+  (older EV Assistant versions, or no `gps_entity` configured).
+
 ## [1.6.0] - 2026-07-21
 
 ### Added

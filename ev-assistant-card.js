@@ -681,8 +681,11 @@ class EvAssistantCard extends HTMLElement {
   _renderPendingTripForm(p) {
     const startTs = p.start_ts;
     const state = this._formStateTrip[startTs] || (this._formStateTrip[startTs] = {});
-    if (state.startOrt === undefined) state.startOrt = '';
-    if (state.endOrt === undefined) state.endOrt = '';
+    // Vorausgefuellt aus dem optionalen GPS-/Zonen-Vorschlag der Integration
+    // (person-/device_tracker-Entitaet, siehe ev_assistant README
+    // "Fahrtenbuch") -- reiner Vorschlag, bleibt frei editierbar/loeschbar.
+    if (state.startOrt === undefined) state.startOrt = p.start_ort_vorschlag || '';
+    if (state.endOrt === undefined) state.endOrt = p.end_ort_vorschlag || '';
     return `
       <div class="pending-box" data-start-ts="${startTs}">
         <div class="pending-row">
@@ -1144,7 +1147,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen und Fahrtenbuch an und erfasst beides direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.6.0 geladen');
+console.log('[ev-assistant-card] v1.7.0 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)
