@@ -2,6 +2,15 @@
 
 All notable changes to the EV Assistant Card. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.7.1] - 2026-07-31
+
+### Added
+
+- **Start/end SoC shown in the external-charge history list**: each confirmed history row now
+  shows the SoC range (e.g. "32% → 74%") next to the date, when the entry has `soc_start`/
+  `soc_end` (i.e. it came from an automatically detected charge, not a manual one-off entry).
+  Falls back to hiding it cleanly when either value is missing.
+
 ## [1.7.0] - 2026-07-24
 
 ### Added

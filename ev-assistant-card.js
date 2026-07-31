@@ -665,9 +665,10 @@ class EvAssistantCard extends HTMLElement {
         </div>`;
     }
     const dur = this._fmtDuration(rec.dauer_min);
+    const soc = (rec.soc_start != null && rec.soc_end != null) ? `${rec.soc_start}% → ${rec.soc_end}%` : '';
     return `
       <div class="hist-row" data-erfasst-ts="${ts}">
-        <div class="hist-date">${this._fmtDate(ts)}${dur ? `<span class="hist-duration">${dur}</span>` : ''}</div>
+        <div class="hist-date">${this._fmtDate(ts)}${dur ? `<span class="hist-duration">${dur}</span>` : ''}${soc ? `<span class="hist-soc">${soc}</span>` : ''}</div>
         <div class="hist-kwh">${this._fmt(rec.kwh, 1)} kWh</div>
         <div class="hist-price">${this._fmt(rec.preis_kwh, 3)} €/kWh</div>
         <div class="hist-cost">${this._fmt(rec.kosten, 2)} €</div>
@@ -975,6 +976,7 @@ class EvAssistantCard extends HTMLElement {
       .hist-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;background:var(--secondary-background-color,rgba(0,0,0,.03));font-size:12px}
       .hist-date{color:var(--secondary-text-color)}
       .hist-duration{display:block;font-size:10px;opacity:.8}
+      .hist-soc{display:block;font-size:10px;opacity:.8}
       .hist-kwh,.hist-price,.hist-cost{font-weight:500}
       .hist-btn{border:none;background:transparent;color:var(--secondary-text-color);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px}
       .hist-btn:hover{background:rgba(0,0,0,.06);color:var(--primary-text-color)}
@@ -1147,7 +1149,7 @@ window.customCards.push({
   description: 'Zeigt Fremdladungen und Fahrtenbuch an und erfasst beides direkt in der Karte.',
 });
 
-console.log('[ev-assistant-card] v1.7.0 geladen');
+console.log('[ev-assistant-card] v1.7.1 geladen');
 
 // ============================================================================
 // Config-Editor (Kartenauswahl-UI)
